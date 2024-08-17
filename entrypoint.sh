@@ -2,30 +2,36 @@
 
 set -euo pipefail
 
-DATABASE_URL="${DATABASE_URL}"
-
-SUPABASE_PROJECT_ID="${SUPABASE_PROJECT_ID}"
-SUPABASE_SERVICE_KEY="${SUPABASE_SERVICE_KEY}"
-SUPABASE_BUCKET_NAME="${SUPABASE_BUCKET_NAME:-database-backups}"
+DATABASE_NAME="${DATABASE_NAME}"
+AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}"
+AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}"
+DATABASE_USER="${DATABASE_USER}"
+DATABASE_PASSWORD="${DATABASE_PASSWORD}"
+DATABASE_HOST="${DATABASE_HOST}"
+DATABASE_PORT="${DATABASE_PORT}"
+S3_BUCKET_NAME="${S3_BUCKET_NAME}"
 
 TIMESTAMP="$(date +%s)"
 
 DUMP_FILE="db-dump-${TIMESTAMP}.sql.gz"
 
-echo "Creating dump at ${DUMP_FILE}"
 
+aws configure set aws_access_key_id "${AWS_ACCESS_KEY_ID}"
+aws configure set aws_secret_access_key "${AWS_SECRET_ACCESS_KEY}"
+aws configure set default.region "us-west-2"
 
-if [[ -n "${USE_PGDUMPALL:-}" ]]; then
-	export PGPASSWORD="$(echo "${DATABASE_URL}" | awk -F'[:@]' '{ print $3 }')"
-	time pg_dumpall -d "${DATABASE_URL}" --no-role-passwords | gzip > "${DUMP_FILE}"
-else
-	time pg_dump -d "${DATABASE_URL}" | gzip > "${DUMP_FILE}"
-fi
+echo "Creating dump at s3://${S3_BUCKET_NAME}/database-backups/${DATABASE_NAME}/${DUMP_FILE}"
 
+pg_dump "postgresql://${DATABASE_USER}:${DATABASE_PASSWORD}@${DATABASE_HOST}:${DATABASE_PORT}/${DATABASE_NAME}?sslmode=require" -n public -v   | gzip > "${DUMP_FILE}"
 echo "Dump complete. Uploading..."
 
-curl \
-	-H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
-	-F "data=@${DUMP_FILE}" \
-	"https://${SUPABASE_PROJECT_ID}.supabase.co/storage/v1/object/${SUPABASE_BUCKET_NAME}/${DUMP_FILE}"
+#configure aws credentials for s3
+aws configure set aws_access_key_id "${AWS_ACCESS_KEY_ID}"
+aws configure set aws_secret_access_key "${AWS_SECRET_ACCESS_KEY}"
+aws configure set default.region "us-west-2"
+
+#send to s3
+aws s3 cp "${DUMP_FILE}" "s3://${S3_BUCKET_NAME}/database-backups/${DATABASE_NAME}/${DUMP_FILE}"
+
+echo "Upload complete. Cleaning up..."
 
